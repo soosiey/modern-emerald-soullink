@@ -21,6 +21,7 @@
 extern struct MusicPlayerInfo *gMPlay_PokemonCry;
 #include "constants/rgb.h"
 #include "battle_main.h"
+#include "soul_link.h"
 #include "tx_randomizer_and_challenges.h"
 #include "pokemon.h"
 #include "event_data.h"
@@ -98,6 +99,9 @@ enum
     MENUITEM_RANDOM_NEXT,
     MENUITEM_RANDOM_COUNT,
 };
+
+STATIC_ASSERT(MENUITEM_RANDOM_NEXT == SOUL_LINK_RANDOMIZER_SETTING_COUNT,
+              SoulLinkRandomizerSettingsCount);
 
 enum
 {
@@ -668,6 +672,14 @@ static const u8 *const OptionTextRight(u8 menuItem)
 // Menu left side text conditions
 static bool8 CheckConditions(int selection)
 {
+    // Soul Link rules are fixed; only navigation and randomizer choices remain editable.
+    if ((sOptions->submenu == MENU_MODE && selection != MENUITEM_MODE_NEXT)
+        || (sOptions->submenu == MENU_FEATURES && selection != MENUITEM_FEATURES_NEXT)
+        || (sOptions->submenu == MENU_NUZLOCKE && selection != MENUITEM_NUZLOCKE_NEXT)
+        || (sOptions->submenu == MENU_DIFFICULTY && selection != MENUITEM_DIFFICULTY_NEXT)
+        || (sOptions->submenu == MENU_CHALLENGES && selection != MENUITEM_CHALLENGES_SAVE))
+        return FALSE;
+
     switch (sOptions->submenu)
     {
     case MENU_MODE:
@@ -1139,27 +1151,27 @@ static const u8 *const OptionTextDescription(void)
     switch (sOptions->submenu)
     {
     case MENU_MODE:
-        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledMode[menuItem] != sText_Empty)
+        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledMode[menuItem] != NULL && sOptionMenuItemDescriptionsDisabledMode[menuItem] != sText_Empty)
             return sOptionMenuItemDescriptionsDisabledMode[menuItem];
         selection = sOptions->sel_mode[menuItem];
         return sOptionMenuItemDescriptionsMode[menuItem][selection];
     case MENU_FEATURES:
-        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledFeatures[menuItem] != sText_Empty)
+        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledFeatures[menuItem] != NULL && sOptionMenuItemDescriptionsDisabledFeatures[menuItem] != sText_Empty)
             return sOptionMenuItemDescriptionsDisabledFeatures[menuItem];
         selection = sOptions->sel_features[menuItem];
         return sOptionMenuItemDescriptionsFeatures[menuItem][selection];
     case MENU_RANDOMIZER:
-        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledRandomizer[menuItem] != sText_Empty)
+        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledRandomizer[menuItem] != NULL && sOptionMenuItemDescriptionsDisabledRandomizer[menuItem] != sText_Empty)
             return sOptionMenuItemDescriptionsDisabledRandomizer[menuItem];
         selection = sOptions->sel_randomizer[menuItem];
         return sOptionMenuItemDescriptionsRandomizer[menuItem][selection];
     case MENU_NUZLOCKE:
-        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledNuzlocke[menuItem] != sText_Empty)
+        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledNuzlocke[menuItem] != NULL && sOptionMenuItemDescriptionsDisabledNuzlocke[menuItem] != sText_Empty)
             return sOptionMenuItemDescriptionsDisabledNuzlocke[menuItem];
         selection = sOptions->sel_nuzlocke[menuItem];
         return sOptionMenuItemDescriptionsNuzlocke[menuItem][selection];
     case MENU_DIFFICULTY:
-        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledDifficulty[menuItem] != sText_Empty)
+        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledDifficulty[menuItem] != NULL && sOptionMenuItemDescriptionsDisabledDifficulty[menuItem] != sText_Empty)
             return sOptionMenuItemDescriptionsDisabledDifficulty[menuItem];
         selection = sOptions->sel_difficulty[menuItem];
         if (sOptions->menuCursor[MENU_DIFFICULTY] == MENUITEM_DIFFICULTY_PARTY_LIMIT)
@@ -1167,7 +1179,7 @@ static const u8 *const OptionTextDescription(void)
         else
             return sOptionMenuItemDescriptionsDifficulty[menuItem][selection];
     case MENU_CHALLENGES:
-        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledChallenges[menuItem] != sText_Empty)
+        if (!CheckConditions(menuItem) && sOptionMenuItemDescriptionsDisabledChallenges[menuItem] != NULL && sOptionMenuItemDescriptionsDisabledChallenges[menuItem] != sText_Empty)
             return sOptionMenuItemDescriptionsDisabledChallenges[menuItem];
         selection = sOptions->sel_challenges[menuItem];
         if (sOptions->menuCursor[MENU_CHALLENGES] == MENUITEM_CHALLENGES_ONE_TYPE_CHALLENGE)
@@ -1528,7 +1540,7 @@ void CB2_InitTxRandomizerChallengesMenu(void)
 
         sOptions = AllocZeroed(sizeof(*sOptions));
         //MENU MODE
-        sOptions->sel_mode[MENUITEM_MODE_CLASSIC_MODERN]         = FALSE;
+        sOptions->sel_mode[MENUITEM_MODE_CLASSIC_MODERN]         = 2; // Custom
         sOptions->sel_mode[MENUITEM_MODE_ALTERNATE_SPAWNS]       = gSaveBlock1Ptr->tx_Mode_Encounters;
         sOptions->sel_mode[MENUITEM_MODE_INFINITE_TMS]           = gSaveBlock1Ptr->tx_Mode_InfiniteTMs;
         sOptions->sel_mode[MENUITEM_MODE_SURVIVE_POISON]         = gSaveBlock1Ptr->tx_Mode_PoisonSurvive;
@@ -1572,11 +1584,11 @@ void CB2_InitTxRandomizerChallengesMenu(void)
 
         // MENU_NUZLOCKE
         if (gSaveBlock1Ptr->tx_Challenges_Nuzlocke && gSaveBlock1Ptr->tx_Challenges_NuzlockeHardcore)
-            sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 2;
+            sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 3;
         else if (gSaveBlock1Ptr->tx_Challenges_Nuzlocke)
-            sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 1;
+            sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 2;
         else if (gSaveBlock1Ptr->tx_Nuzlocke_EasyMode)
-            sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 0;
+            sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 1;
         else
             sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_NUZLOCKE] = 0;
         sOptions->sel_nuzlocke[MENUITEM_NUZLOCKE_SPECIES_CLAUSE]    = !gSaveBlock1Ptr->tx_Nuzlocke_SpeciesClause;
@@ -1883,6 +1895,16 @@ static void Task_RandomizerChallengesMenuFadeOut(u8 taskId)
 
 void SaveData_TxRandomizerAndChallenges(void)
 {
+    u16 randomizerSettings = 0;
+    u8 i;
+
+    for (i = 0; i < SOUL_LINK_RANDOMIZER_SETTING_COUNT; i++)
+    {
+        if (sOptions->sel_randomizer[i])
+            randomizerSettings |= 1 << i;
+    }
+    SoulLink_SetPendingRandomizerSettings(randomizerSettings);
+
     PrintCurrentSelections();
     //MENU MODE
     gSaveBlock1Ptr->tx_Mode_Encounters                  = sOptions->sel_mode[MENUITEM_MODE_ALTERNATE_SPAWNS];
@@ -1942,6 +1964,7 @@ void SaveData_TxRandomizerAndChallenges(void)
         gSaveBlock1Ptr->tx_Random_Evolutions         = FALSE;
         gSaveBlock1Ptr->tx_Random_EvolutionMethods   = FALSE;
         gSaveBlock1Ptr->tx_Random_TypeEffectiveness  = FALSE;
+        gSaveBlock1Ptr->tx_Random_Items              = FALSE;
         gSaveBlock1Ptr->tx_Random_Chaos              = FALSE;
     }
     //MENU_NUZLOCKE

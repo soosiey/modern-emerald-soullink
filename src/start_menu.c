@@ -3,6 +3,7 @@
 #include "battle_pyramid.h"
 #include "battle_pyramid_bag.h"
 #include "bg.h"
+#include "data.h"
 #include "debug.h"
 #include "event_data.h"
 #include "event_object_movement.h"
@@ -22,6 +23,7 @@
 #include "link.h"
 #include "load_save.h"
 #include "main.h"
+#include "malloc.h"
 #include "menu.h"
 #include "new_game.h"
 #include "option_menu.h"
@@ -30,11 +32,14 @@
 #include "party_menu.h"
 #include "pokedex.h"
 #include "pokenav.h"
+#include "pokemon_icon.h"
+#include "region_map.h"
 #include "safari_zone.h"
 #include "save.h"
 #include "scanline_effect.h"
 #include "script.h"
 #include "sound.h"
+#include "soul_link.h"
 #include "start_menu.h"
 #include "strings.h"
 #include "string_util.h"
@@ -65,6 +70,7 @@ enum
     MENU_ACTION_RETIRE_FRONTIER,
     MENU_ACTION_PYRAMID_BAG,
     MENU_ACTION_DEBUG,
+    MENU_ACTION_SOUL_LINKS,
 };
 
 // Save status
@@ -92,6 +98,27 @@ EWRAM_DATA static u8 sSaveDialogTimer = 0;
 EWRAM_DATA static bool8 sSavingComplete = FALSE;
 EWRAM_DATA static u8 sSaveInfoWindowId = 0;
 
+#define SOUL_LINK_ALIVE_COLOR 10
+#define SOUL_LINK_DEAD_COLOR  11
+
+struct SoulLinkMenuState
+{
+    u16 groupCount;
+    u16 selectedRow;
+    u16 topRow;
+    u8 windowId;
+    u8 activePlayerMask;
+    u8 nextPlayerSlot;
+    u8 nextVisibleRow;
+    bool8 iconPalettesLoaded;
+    bool8 cellPalettesLoaded;
+    u8 iconSpriteIds[2][4];
+    u8 playerNames[4][PLAYER_NAME_LENGTH + 1];
+    struct SoulLinkRegistryMember rowMembers[2][4];
+};
+
+EWRAM_DATA static struct SoulLinkMenuState *sSoulLinkMenu = NULL;
+
 // Menu action callbacks
 static bool8 StartMenuPokedexCallback(void);
 static bool8 StartMenuPokemonCallback(void);
@@ -106,6 +133,20 @@ static bool8 StartMenuLinkModePlayerNameCallback(void);
 static bool8 StartMenuBattlePyramidRetireCallback(void);
 static bool8 StartMenuBattlePyramidBagCallback(void);
 static bool8 StartMenuDebugCallback(void);
+static bool8 StartMenuSoulLinksCallback(void);
+static bool8 WaitForSoulLinkRegistryCount(void);
+static bool8 WaitForSoulLinkPlayerNames(void);
+static bool8 WaitForSoulLinkRows(void);
+static bool8 HandleSoulLinkBrowserInput(void);
+static bool8 ShowSoulLinkBrowser(void);
+static void DrawSoulLinkBrowser(void);
+static bool8 CloseSoulLinkBrowser(void);
+static void PrintSoulLinkCellText(const u8 *text, u8 column, u8 y,
+    const u8 *colors);
+static void CreateSoulLinkIcons(void);
+static void DestroySoulLinkIcons(void);
+static void FreeSoulLinkMenu(void);
+static void Task_CloseSoulLinkCount(u8 taskId);
 
 // Menu callbacks
 static bool8 SaveStartCallback(void);
@@ -183,7 +224,33 @@ static const struct WindowTemplate sWindowTemplate_PyramidPeak = {
     .baseBlock = 0x8
 };
 
+static const struct WindowTemplate sWindowTemplate_SoulLinks = {
+    .bg = 0,
+    .tilemapLeft = 1,
+    .tilemapTop = 1,
+    .width = 28,
+    .height = 18,
+    .paletteNum = 15,
+    .baseBlock = 0x1
+};
+
 static const u8 gText_MenuDebug[] = _("DEBUG");
+static const u8 sText_MenuSoulLinks[] = _("LINKS");
+static const u8 sText_SoulLinkCount[] = _("Linked groups: {STR_VAR_1}{PAUSE_UNTIL_PRESS}");
+static const u8 sText_SoulLinkSlash[] = _("/");
+static const u8 sText_SoulLinkId[] = _(" ID ");
+static const u8 sText_SoulLinkSpace[] = _(" ");
+static const u8 sText_SoulLinkClose[] = _(" B: CLOSE");
+static const u8 sText_SoulLinkNoPlayer[] = _("N/A");
+static const u8 sText_SoulLinkMissed[] = _("MISSED");
+static const u8 sText_SoulLinkStarter[] = _("Starter");
+static const u8 sText_SoulLinkUnavailable[] = _("Link registry is not ready.{PAUSE_UNTIL_PRESS}");
+static const u8 sTextColor_SoulLinkAlive[] = {
+    SOUL_LINK_ALIVE_COLOR, TEXT_COLOR_DARK_GRAY, TEXT_COLOR_LIGHT_GRAY};
+static const u8 sTextColor_SoulLinkDead[] = {
+    SOUL_LINK_DEAD_COLOR, TEXT_COLOR_DARK_GRAY, TEXT_COLOR_LIGHT_GRAY};
+static const u16 sSoulLinkCellPalette[] = {
+    RGB(20, 30, 20), RGB(31, 20, 20)};
 
 static const struct MenuAction sStartMenuItems[] =
 {
@@ -200,7 +267,8 @@ static const struct MenuAction sStartMenuItems[] =
     [MENU_ACTION_REST_FRONTIER]   = {gText_MenuRest,    {.u8_void = StartMenuSaveCallback}},
     [MENU_ACTION_RETIRE_FRONTIER] = {gText_MenuRetire,  {.u8_void = StartMenuBattlePyramidRetireCallback}},
     [MENU_ACTION_PYRAMID_BAG]     = {gText_MenuBag,     {.u8_void = StartMenuBattlePyramidBagCallback}},
-    [MENU_ACTION_DEBUG]           = {gText_MenuDebug,   {.u8_void = StartMenuDebugCallback}}
+    [MENU_ACTION_DEBUG]           = {gText_MenuDebug,   {.u8_void = StartMenuDebugCallback}},
+    [MENU_ACTION_SOUL_LINKS]      = {sText_MenuSoulLinks, {.u8_void = StartMenuSoulLinksCallback}}
 };
 
 static const struct BgTemplate sBgTemplates_LinkBattleSave[] =
@@ -321,7 +389,8 @@ static void BuildStartMenuActions(void)
 
 static void AddStartMenuAction(u8 action)
 {
-    AppendToList(sCurrentStartMenuActions, &sNumStartMenuActions, action);
+    if (sNumStartMenuActions < ARRAY_COUNT(sCurrentStartMenuActions))
+        AppendToList(sCurrentStartMenuActions, &sNumStartMenuActions, action);
 }
 
 static void BuildNormalStartMenu(void)
@@ -345,7 +414,8 @@ static void BuildNormalStartMenu(void)
     AddStartMenuAction(MENU_ACTION_PLAYER);
     AddStartMenuAction(MENU_ACTION_SAVE);
     AddStartMenuAction(MENU_ACTION_OPTION);
-    AddStartMenuAction(MENU_ACTION_EXIT);
+    AddStartMenuAction(SoulLink_IsActive()
+        ? MENU_ACTION_SOUL_LINKS : MENU_ACTION_EXIT);
 }
 
 static void BuildDebugStartMenu(void)
@@ -653,6 +723,7 @@ static bool8 HandleStartMenuInput(void)
 
         if (gMenuCallback != StartMenuSaveCallback
             && gMenuCallback != StartMenuExitCallback
+            && gMenuCallback != StartMenuSoulLinksCallback
             && gMenuCallback != StartMenuDebugCallback
             && gMenuCallback != StartMenuSafariZoneRetireCallback
             && gMenuCallback != StartMenuBattlePyramidRetireCallback)
@@ -787,6 +858,466 @@ static bool8 StartMenuExitCallback(void)
     HideStartMenu(); // Hide start menu
 
     return TRUE;
+}
+
+static bool8 StartMenuSoulLinksCallback(void)
+{
+    if (JOY_NEW(B_BUTTON))
+    {
+        SoulLink_CancelRegistryRequest();
+        HideStartMenu();
+        return TRUE;
+    }
+    if (SoulLink_RequestRegistryCount())
+        gMenuCallback = WaitForSoulLinkRegistryCount;
+    return FALSE;
+}
+
+static bool8 WaitForSoulLinkRegistryCount(void)
+{
+    u16 count;
+    bool8 valid;
+    u8 taskId;
+
+    if (JOY_NEW(B_BUTTON))
+    {
+        SoulLink_CancelRegistryRequest();
+        HideStartMenu();
+        return TRUE;
+    }
+    if (!SoulLink_TakeRegistryCount(&count, &valid))
+        return FALSE;
+
+    if (valid && count > 0)
+    {
+        sSoulLinkMenu = AllocZeroed(sizeof(*sSoulLinkMenu));
+        if (sSoulLinkMenu != NULL)
+        {
+            memset(sSoulLinkMenu->iconSpriteIds, SPRITE_NONE,
+                sizeof(sSoulLinkMenu->iconSpriteIds));
+            sSoulLinkMenu->groupCount = count;
+            sSoulLinkMenu->selectedRow = 0;
+            sSoulLinkMenu->windowId = WINDOW_NONE;
+            sSoulLinkMenu->activePlayerMask = SoulLink_GetActivePlayerMask();
+            sSoulLinkMenu->nextPlayerSlot = 1;
+            if (sSoulLinkMenu->activePlayerMask != 0)
+            {
+                gMenuCallback = WaitForSoulLinkPlayerNames;
+                return FALSE;
+            }
+            FreeSoulLinkMenu();
+        }
+        valid = FALSE;
+    }
+
+    ClearStdWindowAndFrame(GetStartMenuWindowId(), TRUE);
+    RemoveStartMenuWindow();
+    taskId = FindTaskIdByFunc(Task_ShowStartMenu);
+    if (valid)
+    {
+        ConvertIntToDecimalStringN(gStringVar1, count, STR_CONV_MODE_LEFT_ALIGN, 3);
+        DisplayItemMessageOnField(taskId, sText_SoulLinkCount, Task_CloseSoulLinkCount);
+    }
+    else
+    {
+        DisplayItemMessageOnField(taskId, sText_SoulLinkUnavailable,
+            Task_CloseSoulLinkCount);
+    }
+    return FALSE;
+}
+
+static bool8 WaitForSoulLinkPlayerNames(void)
+{
+    u8 playerName[PLAYER_NAME_LENGTH + 1];
+    u8 slot = sSoulLinkMenu->nextPlayerSlot;
+    bool8 valid;
+    u8 taskId;
+
+    if (JOY_NEW(B_BUTTON))
+    {
+        SoulLink_CancelRegistryRequest();
+        FreeSoulLinkMenu();
+        HideStartMenu();
+        return TRUE;
+    }
+
+    while (slot <= 4
+        && !(sSoulLinkMenu->activePlayerMask & (1 << (slot - 1))))
+        slot++;
+    if (slot > 4)
+    {
+        sSoulLinkMenu->nextPlayerSlot = 1;
+        sSoulLinkMenu->nextVisibleRow = 0;
+        gMenuCallback = WaitForSoulLinkRows;
+        return FALSE;
+    }
+    if (!SoulLink_TakeRegistryPlayerName(playerName, &valid))
+    {
+        SoulLink_RequestRegistryPlayerName(slot);
+        return FALSE;
+    }
+    if (valid)
+    {
+        StringCopy(sSoulLinkMenu->playerNames[slot - 1], playerName);
+        sSoulLinkMenu->nextPlayerSlot = slot + 1;
+        return FALSE;
+    }
+
+    FreeSoulLinkMenu();
+    ClearStdWindowAndFrame(GetStartMenuWindowId(), TRUE);
+    RemoveStartMenuWindow();
+    taskId = FindTaskIdByFunc(Task_ShowStartMenu);
+    DisplayItemMessageOnField(taskId, sText_SoulLinkUnavailable,
+        Task_CloseSoulLinkCount);
+    return FALSE;
+}
+
+static bool8 WaitForSoulLinkRows(void)
+{
+    struct SoulLinkRegistryMember member;
+    u8 visibleRow = sSoulLinkMenu->nextVisibleRow;
+    u8 slot = sSoulLinkMenu->nextPlayerSlot;
+    bool8 valid;
+    u8 taskId;
+
+    if (JOY_NEW(B_BUTTON))
+        return CloseSoulLinkBrowser();
+
+    if (visibleRow >= 2
+     || sSoulLinkMenu->topRow + visibleRow >= sSoulLinkMenu->groupCount)
+    {
+        if (sSoulLinkMenu->windowId != WINDOW_NONE)
+        {
+            DrawSoulLinkBrowser();
+            gMenuCallback = HandleSoulLinkBrowserInput;
+            return FALSE;
+        }
+        if (ShowSoulLinkBrowser())
+        {
+            gMenuCallback = HandleSoulLinkBrowserInput;
+            return FALSE;
+        }
+        ClearStdWindowAndFrame(GetStartMenuWindowId(), TRUE);
+        RemoveStartMenuWindow();
+        taskId = FindTaskIdByFunc(Task_ShowStartMenu);
+        DisplayItemMessageOnField(taskId, sText_SoulLinkUnavailable,
+            Task_CloseSoulLinkCount);
+        return FALSE;
+    }
+
+    while (slot <= 4
+        && !(sSoulLinkMenu->activePlayerMask & (1 << (slot - 1))))
+        slot++;
+    if (slot > 4)
+    {
+        sSoulLinkMenu->nextVisibleRow++;
+        sSoulLinkMenu->nextPlayerSlot = 1;
+        return FALSE;
+    }
+    if (!SoulLink_TakeRegistryMember(&member, &valid))
+    {
+        SoulLink_RequestRegistryMember(sSoulLinkMenu->topRow + visibleRow, slot);
+        return FALSE;
+    }
+    if (valid)
+    {
+        sSoulLinkMenu->rowMembers[visibleRow][slot - 1] = member;
+        sSoulLinkMenu->nextPlayerSlot = slot + 1;
+        return FALSE;
+    }
+    if (sSoulLinkMenu->windowId != WINDOW_NONE)
+        return CloseSoulLinkBrowser();
+
+    FreeSoulLinkMenu();
+    ClearStdWindowAndFrame(GetStartMenuWindowId(), TRUE);
+    RemoveStartMenuWindow();
+    taskId = FindTaskIdByFunc(Task_ShowStartMenu);
+    DisplayItemMessageOnField(taskId, sText_SoulLinkUnavailable,
+        Task_CloseSoulLinkCount);
+    return FALSE;
+}
+
+static bool8 ShowSoulLinkBrowser(void)
+{
+    sSoulLinkMenu->windowId = AddWindow(&sWindowTemplate_SoulLinks);
+    if (sSoulLinkMenu->windowId == WINDOW_NONE)
+    {
+        FreeSoulLinkMenu();
+        return FALSE;
+    }
+
+    RemoveExtraStartMenuWindows();
+    ClearStdWindowAndFrame(GetStartMenuWindowId(), FALSE);
+    RemoveStartMenuWindow();
+    DrawStdWindowFrame(sSoulLinkMenu->windowId, FALSE);
+    LoadPalette(sSoulLinkCellPalette,
+        BG_PLTT_ID(15) + SOUL_LINK_ALIVE_COLOR, sizeof(sSoulLinkCellPalette));
+    sSoulLinkMenu->cellPalettesLoaded = TRUE;
+    LoadMonIconPalettes();
+    sSoulLinkMenu->iconPalettesLoaded = TRUE;
+    DrawSoulLinkBrowser();
+    return TRUE;
+}
+
+static void DrawSoulLinkBrowser(void)
+{
+    const struct SoulLinkRegistryMember *selectedMember = NULL;
+    u8 visibleRow;
+    u8 slot;
+    u8 column = 0;
+    const u8 columnWidth = 224 / 4;
+    const u8 *playerName;
+    u8 mapNameLength;
+    u8 x;
+
+    DestroySoulLinkIcons();
+    FillWindowPixelBuffer(sSoulLinkMenu->windowId, PIXEL_FILL(1));
+    for (slot = 1; slot <= 4; slot++)
+    {
+        playerName = sSoulLinkMenu->activePlayerMask & (1 << (slot - 1))
+            ? sSoulLinkMenu->playerNames[slot - 1] : sText_SoulLinkNoPlayer;
+        x = column * columnWidth + GetStringCenterAlignXOffset(FONT_SMALL_NARROW,
+            playerName, columnWidth);
+        AddTextPrinterParameterized(sSoulLinkMenu->windowId, FONT_SMALL_NARROW,
+            playerName, x, 0, TEXT_SKIP_DRAW, NULL);
+        column++;
+    }
+
+    for (visibleRow = 0; visibleRow < 2
+        && sSoulLinkMenu->topRow + visibleRow < sSoulLinkMenu->groupCount;
+        visibleRow++)
+    {
+        const u8 *selectorColors = NULL;
+
+        for (slot = 1; slot <= 4; slot++)
+        {
+            const struct SoulLinkRegistryMember *member =
+                &sSoulLinkMenu->rowMembers[visibleRow][slot - 1];
+            const u8 *colors;
+
+            if (!(sSoulLinkMenu->activePlayerMask & (1 << (slot - 1))))
+                continue;
+            colors = member->dead || member->missed
+                ? sTextColor_SoulLinkDead : sTextColor_SoulLinkAlive;
+            FillWindowPixelRect(sSoulLinkMenu->windowId,
+                PIXEL_FILL(colors[0]), (slot - 1) * columnWidth,
+                12 + visibleRow * 56, columnWidth, 56);
+            if (slot == 1)
+                selectorColors = colors;
+        }
+        if (sSoulLinkMenu->topRow + visibleRow == sSoulLinkMenu->selectedRow)
+        {
+            if (selectorColors != NULL)
+                AddTextPrinterParameterized3(sSoulLinkMenu->windowId,
+                    FONT_SMALL_NARROW, 0, 28 + visibleRow * 56,
+                    selectorColors, TEXT_SKIP_DRAW, gText_SelectorArrow3);
+            else
+                AddTextPrinterParameterized(sSoulLinkMenu->windowId,
+                    FONT_SMALL_NARROW, gText_SelectorArrow3, 0,
+                    28 + visibleRow * 56, TEXT_SKIP_DRAW, NULL);
+        }
+        for (slot = 1; slot <= 4; slot++)
+        {
+            const struct SoulLinkRegistryMember *member =
+                &sSoulLinkMenu->rowMembers[visibleRow][slot - 1];
+            const u8 *colors;
+
+            if (!(sSoulLinkMenu->activePlayerMask & (1 << (slot - 1))))
+                continue;
+            colors = member->dead || member->missed
+                ? sTextColor_SoulLinkDead : sTextColor_SoulLinkAlive;
+            if (sSoulLinkMenu->topRow + visibleRow == sSoulLinkMenu->selectedRow
+             && selectedMember == NULL)
+                selectedMember = member;
+            if (member->missed)
+                PrintSoulLinkCellText(sText_SoulLinkMissed, slot - 1,
+                    50 + visibleRow * 56, colors);
+            else
+            {
+                PrintSoulLinkCellText(member->nickname, slot - 1,
+                    44 + visibleRow * 56, colors);
+                PrintSoulLinkCellText(gSpeciesNames[member->species], slot - 1,
+                    56 + visibleRow * 56, colors);
+            }
+        }
+    }
+    ConvertIntToDecimalStringN(gStringVar4, sSoulLinkMenu->selectedRow + 1,
+        STR_CONV_MODE_LEFT_ALIGN, 3);
+    StringAppend(gStringVar4, sText_SoulLinkSlash);
+    ConvertIntToDecimalStringN(gStringVar1, sSoulLinkMenu->groupCount,
+        STR_CONV_MODE_LEFT_ALIGN, 3);
+    StringAppend(gStringVar4, gStringVar1);
+    StringAppend(gStringVar4, sText_SoulLinkId);
+    ConvertIntToDecimalStringN(gStringVar1, selectedMember->groupId,
+        STR_CONV_MODE_LEFT_ALIGN, 5);
+    StringAppend(gStringVar4, gStringVar1);
+    StringCopy(gStringVar3, gStringVar4);
+    if (selectedMember->groupId == SOUL_LINK_STARTER_GROUP_ID)
+        StringCopy(gStringVar2, sText_SoulLinkStarter);
+    else
+        GetMapName(gStringVar2, selectedMember->location, 0);
+    mapNameLength = StringLength(gStringVar2);
+    do
+    {
+        StringCopy(gStringVar4, gStringVar3);
+        StringAppend(gStringVar4, sText_SoulLinkSpace);
+        StringAppend(gStringVar4, gStringVar2);
+        StringAppend(gStringVar4, sText_SoulLinkClose);
+        if (GetStringWidth(FONT_SMALL_NARROW, gStringVar4, -1) <= 224
+         || mapNameLength == 0)
+            break;
+        gStringVar2[--mapNameLength] = EOS;
+    } while (TRUE);
+    x = GetStringCenterAlignXOffset(FONT_SMALL_NARROW, gStringVar4, 224);
+    AddTextPrinterParameterized(sSoulLinkMenu->windowId, FONT_SMALL_NARROW,
+        gStringVar4, x, 132, TEXT_SKIP_DRAW, NULL);
+    CopyWindowToVram(sSoulLinkMenu->windowId, COPYWIN_FULL);
+    CreateSoulLinkIcons();
+}
+
+static void CreateSoulLinkIcons(void)
+{
+    u8 visibleRow;
+    u8 slot;
+    u8 spriteId;
+
+    for (visibleRow = 0; visibleRow < 2
+        && sSoulLinkMenu->topRow + visibleRow < sSoulLinkMenu->groupCount;
+        visibleRow++)
+    {
+        for (slot = 0; slot < 4; slot++)
+        {
+            const struct SoulLinkRegistryMember *member =
+                &sSoulLinkMenu->rowMembers[visibleRow][slot];
+
+            if (!(sSoulLinkMenu->activePlayerMask & (1 << slot))
+             || member->missed || member->species == SPECIES_NONE)
+                continue;
+            spriteId = CreateMonIconNoPersonality(member->species,
+                SpriteCallbackDummy, 36 + slot * 56,
+                36 + visibleRow * 56, 0, FALSE);
+            if (spriteId < MAX_SPRITES)
+            {
+                gSprites[spriteId].oam.priority = 0;
+                sSoulLinkMenu->iconSpriteIds[visibleRow][slot] = spriteId;
+            }
+        }
+    }
+}
+
+static void DestroySoulLinkIcons(void)
+{
+    u8 visibleRow;
+    u8 slot;
+
+    if (sSoulLinkMenu == NULL)
+        return;
+    for (visibleRow = 0; visibleRow < 2; visibleRow++)
+    {
+        for (slot = 0; slot < 4; slot++)
+        {
+            u8 spriteId = sSoulLinkMenu->iconSpriteIds[visibleRow][slot];
+
+            if (spriteId < MAX_SPRITES)
+                FreeAndDestroyMonIconSprite(&gSprites[spriteId]);
+            sSoulLinkMenu->iconSpriteIds[visibleRow][slot] = SPRITE_NONE;
+        }
+    }
+}
+
+static void PrintSoulLinkCellText(const u8 *text, u8 column, u8 y,
+    const u8 *colors)
+{
+    u8 buffer[POKEMON_NAME_LENGTH + 1];
+    u8 length;
+    const u8 columnWidth = 224 / 4;
+    const u8 textWidth = columnWidth - 4;
+    u8 x;
+
+    StringCopy(buffer, text);
+    length = StringLength(buffer);
+    while (length > 0
+        && GetStringWidth(FONT_SMALL_NARROW, buffer, -1) > textWidth)
+        buffer[--length] = EOS;
+    x = column * columnWidth
+        + GetStringCenterAlignXOffset(FONT_SMALL_NARROW, buffer, columnWidth);
+    AddTextPrinterParameterized3(sSoulLinkMenu->windowId, FONT_SMALL_NARROW,
+        x, y, colors, TEXT_SKIP_DRAW, buffer);
+}
+
+static bool8 HandleSoulLinkBrowserInput(void)
+{
+    s16 direction = 0;
+
+    if (JOY_NEW(B_BUTTON))
+        return CloseSoulLinkBrowser();
+    if (JOY_NEW(DPAD_UP) && sSoulLinkMenu->selectedRow > 0)
+        direction = -1;
+    else if (JOY_NEW(DPAD_DOWN)
+          && sSoulLinkMenu->selectedRow + 1 < sSoulLinkMenu->groupCount)
+        direction = 1;
+    if (direction == 0)
+        return FALSE;
+
+    PlaySE(SE_SELECT);
+    sSoulLinkMenu->selectedRow += direction;
+    if (sSoulLinkMenu->selectedRow < sSoulLinkMenu->topRow)
+        sSoulLinkMenu->topRow = sSoulLinkMenu->selectedRow;
+    else if (sSoulLinkMenu->selectedRow >= sSoulLinkMenu->topRow + 2)
+        sSoulLinkMenu->topRow = sSoulLinkMenu->selectedRow - 1;
+    else
+    {
+        DrawSoulLinkBrowser();
+        return FALSE;
+    }
+    sSoulLinkMenu->nextPlayerSlot = 1;
+    sSoulLinkMenu->nextVisibleRow = 0;
+    memset(sSoulLinkMenu->rowMembers, 0, sizeof(sSoulLinkMenu->rowMembers));
+    gMenuCallback = WaitForSoulLinkRows;
+    return FALSE;
+}
+
+static bool8 CloseSoulLinkBrowser(void)
+{
+    SoulLink_CancelRegistryRequest();
+    if (sSoulLinkMenu == NULL || sSoulLinkMenu->windowId == WINDOW_NONE)
+    {
+        FreeSoulLinkMenu();
+        HideStartMenu();
+        return TRUE;
+    }
+
+    PlaySE(SE_SELECT);
+    ClearStdWindowAndFrame(sSoulLinkMenu->windowId, TRUE);
+    RemoveWindow(sSoulLinkMenu->windowId);
+    FreeSoulLinkMenu();
+    ScriptUnfreezeObjectEvents();
+    UnlockPlayerFieldControls();
+    return TRUE;
+}
+
+static void FreeSoulLinkMenu(void)
+{
+    if (sSoulLinkMenu != NULL)
+    {
+        DestroySoulLinkIcons();
+        if (sSoulLinkMenu->iconPalettesLoaded)
+            FreeMonIconPalettes();
+        if (sSoulLinkMenu->cellPalettesLoaded)
+            LoadPalette(gStandardMenuPalette + SOUL_LINK_ALIVE_COLOR,
+                BG_PLTT_ID(15) + SOUL_LINK_ALIVE_COLOR,
+                sizeof(sSoulLinkCellPalette));
+        Free(sSoulLinkMenu);
+        sSoulLinkMenu = NULL;
+    }
+}
+
+static void Task_CloseSoulLinkCount(u8 taskId)
+{
+    ClearDialogWindowAndFrame(0, TRUE);
+    ScriptUnfreezeObjectEvents();
+    UnlockPlayerFieldControls();
+    DestroyTask(taskId);
 }
 
 static bool8 StartMenuDebugCallback(void)
