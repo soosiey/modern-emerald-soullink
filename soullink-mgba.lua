@@ -4,6 +4,12 @@
 local nativeEmu = emu
 local nativeConsole = console
 local nativeSocket = socket
+local nativeCallbacks = callbacks
+
+SOUL_LINK_EMULATOR_NAME = "mGBA"
+SOUL_LINK_REGISTER_FRAME_CALLBACK = function(callback)
+    return nativeCallbacks:add("frame", callback)
+end
 
 local function scriptDirectory()
     local source = debug.getinfo(1, "S").source
@@ -30,34 +36,34 @@ local function loadSocketConfig()
     return config
 end
 
-local domains = {
-    EWRAM = nativeEmu.memory.wram,
-    IWRAM = nativeEmu.memory.iwram,
+local domainBases = {
+    EWRAM = 0x02000000,
+    IWRAM = 0x03000000,
 }
 
-local function domain(name)
-    local selected = domains[name]
-    if not selected then
+local function busAddress(address, name)
+    local base = domainBases[name]
+    if not base then
         error("unsupported mGBA memory domain: " .. tostring(name))
     end
-    return selected
+    return base + address
 end
 
 memory = {
     read_u8 = function(address, name)
-        return domain(name):read8(address)
+        return nativeEmu:read8(busAddress(address, name))
     end,
     read_u16_le = function(address, name)
-        return domain(name):read16(address)
+        return nativeEmu:read16(busAddress(address, name))
     end,
     read_u32_le = function(address, name)
-        return domain(name):read32(address)
+        return nativeEmu:read32(busAddress(address, name))
     end,
     write_u16_le = function(address, value, name)
-        return domain(name):write16(address, value)
+        return nativeEmu:write16(busAddress(address, name), value)
     end,
     write_u32_le = function(address, value, name)
-        return domain(name):write32(address, value)
+        return nativeEmu:write32(busAddress(address, name), value)
     end,
 }
 
@@ -80,9 +86,6 @@ console = {
 emu = {
     framecount = function()
         return nativeEmu:currentFrame()
-    end,
-    frameadvance = function()
-        return nativeEmu:runFrame()
     end,
 }
 

@@ -47,3 +47,5 @@ agbcc/
 AGENTS.md
 HANDOFF.md
 /soullink-config.lua
+AGENTS_PORTING.md
+SOUL_LINK_PORTING.md

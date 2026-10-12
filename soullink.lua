@@ -2130,7 +2130,8 @@ console.log(string.format("[Nuzlocke] save pointer symbol resolved to 0x%08X",
     IWRAM_BASE + saveBlock1PointerOffset))
 console.log(string.format("[SoulLink] mailbox symbol resolved to 0x%08X", EWRAM_BASE + mailboxOffset))
 if commSocketInfo then
-    console.log("[SoulLink] BizHawk socket connected to " .. commSocketInfo)
+    console.log("[SoulLink] " .. (SOUL_LINK_EMULATOR_NAME or "BizHawk")
+        .. " socket connected to " .. commSocketInfo)
 else
     console.log("[SoulLink] " .. commSocketError)
 end
@@ -2144,7 +2145,7 @@ initializeNetwork()
 
 local previousSignature = nil
 local previousError = nil
-while true do
+local function pollOnce()
     updateMailbox()
     updateNetwork()
 
@@ -2165,6 +2166,13 @@ while true do
         previousError = stateError
         previousSignature = nil
     end
+end
 
-    emu.frameadvance()
+if SOUL_LINK_REGISTER_FRAME_CALLBACK then
+    SOUL_LINK_REGISTER_FRAME_CALLBACK(pollOnce)
+else
+    while true do
+        pollOnce()
+        emu.frameadvance()
+    end
 end
