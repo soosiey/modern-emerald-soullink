@@ -403,17 +403,15 @@ static void AddHatchedMonToParty(u8 id)
 
     MonRestorePP(mon);
     CalculateMonStats(mon);
-}
-
-void ScriptHatchMon(void)
-{
-    struct Pokemon *mon = &gPlayerParty[gSpecialVar_0x8004];
-
-    AddHatchedMonToParty(gSpecialVar_0x8004);
     SoulLink_QueueCatch(GetMonData(mon, MON_DATA_PERSONALITY, NULL),
         GetMonData(mon, MON_DATA_OT_ID, NULL),
         GetMonData(mon, MON_DATA_SPECIES, NULL),
         GetMonData(mon, MON_DATA_MET_LOCATION, NULL));
+}
+
+void ScriptHatchMon(void)
+{
+    AddHatchedMonToParty(gSpecialVar_0x8004);
 }
 
 static bool8 _CheckDaycareMonReceivedMail(struct DayCare *daycare, u8 daycareId)

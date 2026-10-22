@@ -405,6 +405,21 @@ static void PublishLocalSnapshot(void)
         return;
     }
 
+    if (groupId == SOUL_LINK_GROUP_NONE
+     && sSnapshotIndex < PARTY_SIZE
+     && !GetBoxMonData(boxMon, MON_DATA_NUZLOCKE_RIBBON)
+     && GetBoxMonData(boxMon, MON_DATA_MET_LEVEL) == 0)
+    {
+        u16 location = GetBoxMonData(boxMon, MON_DATA_MET_LOCATION);
+
+        if (location <= MAPSEC_SAFARI_ZONE_AREA6
+         && NuzlockeFlagGet(location)
+         && SoulLink_QueueCatch(GetBoxMonData(boxMon, MON_DATA_PERSONALITY),
+                GetBoxMonData(boxMon, MON_DATA_OT_ID),
+                GetBoxMonData(boxMon, MON_DATA_SPECIES), location))
+            return;
+    }
+
     if (groupId != SOUL_LINK_STARTER_GROUP_ID
      && groupId != SOUL_LINK_EXEMPT_SHINY_GROUP_ID
      && (groupId & SOUL_LINK_PENDING_GROUP_FLAG))
