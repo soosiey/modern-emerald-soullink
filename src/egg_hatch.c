@@ -10,6 +10,7 @@
 #include "main.h"
 #include "event_data.h"
 #include "sound.h"
+#include "soul_link.h"
 #include "constants/songs.h"
 #include "text.h"
 #include "text_window.h"
@@ -406,7 +407,13 @@ static void AddHatchedMonToParty(u8 id)
 
 void ScriptHatchMon(void)
 {
+    struct Pokemon *mon = &gPlayerParty[gSpecialVar_0x8004];
+
     AddHatchedMonToParty(gSpecialVar_0x8004);
+    SoulLink_QueueCatch(GetMonData(mon, MON_DATA_PERSONALITY, NULL),
+        GetMonData(mon, MON_DATA_OT_ID, NULL),
+        GetMonData(mon, MON_DATA_SPECIES, NULL),
+        GetMonData(mon, MON_DATA_MET_LOCATION, NULL));
 }
 
 static bool8 _CheckDaycareMonReceivedMail(struct DayCare *daycare, u8 daycareId)

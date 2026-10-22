@@ -25,6 +25,7 @@
 #include "menu.h"
 #include "menu_helpers.h"
 #include "mon_markings.h"
+#include "overworld.h"
 #include "party_menu.h"
 #include "palette.h"
 #include "pokeball.h"
@@ -4004,7 +4005,8 @@ static void PrintEggState(void)
 
     if (sMonSummaryScreen->summary.sanity == TRUE)
         text = gText_EggWillTakeALongTime;
-    else if (sum->friendship == 0 && IsNuzlockeActive())
+    else if (sum->friendship == 0 && IsNuzlockeActive()
+          && NuzlockeFlagGet(NuzlockeGetCurrentRegionMapSectionId()))
         text = gText_EggReadyToHatch_Nuzlocke;
     else if (sum->friendship <= 5)
         text = gText_EggAboutToHatch;

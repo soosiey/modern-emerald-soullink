@@ -125,6 +125,7 @@ bool8 HMsOverwriteOptionActive(void)
 const u8 NuzlockeLUT[] =
 {
     //0
+    [MAPSEC_LAVARIDGE_TOWN] = 0x46,
     [MAPSEC_ROUTE_101] = 0x0,
     [MAPSEC_ROUTE_102] = 0x1,
     [MAPSEC_ROUTE_103] = 0x2,
